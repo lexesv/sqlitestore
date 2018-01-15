@@ -71,12 +71,12 @@ func NewStore(endpoint string, tableName string, path string, maxAge int, keyPai
 
 	os.MkdirAll(filepath.Dir(endpoint), 0755)
 
-	db, err := sql.Open("sqlite3_sync", ":memory:")
+	db, err := sql.Open("sqlite3_sync_sqlite_storage", ":memory:")
 	if err != nil {
 		return nil, err
 	}
 	db.Ping()
-	filedb, err := sql.Open("sqlite3_sync", endpoint)
+	filedb, err := sql.Open("sqlite3_sync_sqlite_storage", endpoint)
 	if err != nil {
 		return nil, err
 	}
