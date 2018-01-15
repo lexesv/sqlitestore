@@ -23,8 +23,8 @@ Internally, `sqlitestore` uses [this](https://github.com/mattn/go-sqlite3) SQLit
 
 e.g.,
 
-
-      package main
+```go 
+package main
 
       import (
   	    "fmt"
@@ -54,3 +54,4 @@ e.g.,
     	http.HandleFunc("/", sessTest)
     	http.ListenAndServe(":8080", nil)
     }
+```
