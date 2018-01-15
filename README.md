@@ -6,7 +6,7 @@ Gorilla's Session Store Implementation for SQLite  + in memory database.
 Installation
 ===========
 
-Run `go get github.com/michaeljs1990/sqlitestore` from command line. Gets installed in `$GOPATH`
+Run `go get github.com/lexesv/sqlitestore` from command line. Gets installed in `$GOPATH`
 
 Usage
 =====
