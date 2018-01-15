@@ -54,6 +54,10 @@ type DB interface {
 	Close() error
 }
 
+const (
+	driverName = "sqlite3_sync_sqlite_storage"
+)
+
 func init() {
 	gob.Register(time.Time{})
 }
@@ -62,7 +66,7 @@ func NewStore(endpoint string, tableName string, path string, maxAge int, keyPai
 	// Init memory & file db
 	var conns = []*sqlite3.SQLiteConn{}
 
-	sql.Register("sqlite3_sync", &sqlite3.SQLiteDriver{
+	sql.Register(driverName, &sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
 			conns = append(conns, conn)
 			return nil
@@ -71,12 +75,12 @@ func NewStore(endpoint string, tableName string, path string, maxAge int, keyPai
 
 	os.MkdirAll(filepath.Dir(endpoint), 0755)
 
-	db, err := sql.Open("sqlite3_sync_sqlite_storage", ":memory:")
+	db, err := sql.Open(driverName, ":memory:")
 	if err != nil {
 		return nil, err
 	}
 	db.Ping()
-	filedb, err := sql.Open("sqlite3_sync_sqlite_storage", endpoint)
+	filedb, err := sql.Open(driverName, endpoint)
 	if err != nil {
 		return nil, err
 	}
