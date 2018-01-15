@@ -58,7 +58,7 @@ func init() {
 	gob.Register(time.Time{})
 }
 
-func NewSqliteStore(endpoint string, tableName string, path string, maxAge int, keyPairs ...[]byte) (*SqliteStore, error) {
+func NewStore(endpoint string, tableName string, path string, maxAge int, keyPairs ...[]byte) (*SqliteStore, error) {
 	// Init memory & file db
 	var conns = []*sqlite3.SQLiteConn{}
 

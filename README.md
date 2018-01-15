@@ -11,7 +11,7 @@ Run `go get github.com/michaeljs1990/sqlitestore` from command line. Gets instal
 Usage
 =====
 
-`NewSqliteStore` takes the following paramaters
+`NewStore` takes the following paramaters
 
     endpoint - A sql.Open style endpoint
     tableName - table where sessions are to be saved. Required fields are created automatically if the table doesnot exist.
@@ -35,7 +35,7 @@ package main
       var store *sqlitestore.SqliteStore
       func init() {
          var err error
-         store, err = sqlitestore.NewSqliteStore("./database", "sessions", "/", 3600, []byte("<SecretKey>"))
+         store, err = sqlitestore.NewStore("./database", "sessions", "/", 3600, []byte("<SecretKey>"))
          if err != nil {
              panic(err)
          } 
