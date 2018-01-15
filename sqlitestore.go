@@ -1,6 +1,6 @@
-/* Gorilla Sessions backend for MySQL.
+/* Gorilla Sessions backend for sqlite + in memory database.
 
-Copyright (c) 2013 Contributors. See the list of contributors in the CONTRIBUTORS file for details.
+Copyright (c) 2018 Contributors. See the list of contributors in the CONTRIBUTORS file for details.
 
 This software is licensed under a MIT style license available in the LICENSE file.
 */
@@ -18,7 +18,9 @@ import (
 
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
+	"path/filepath"
+	"os"
 )
 
 type SqliteStore struct {
@@ -27,6 +29,11 @@ type SqliteStore struct {
 	stmtDelete *sql.Stmt
 	stmtUpdate *sql.Stmt
 	stmtSelect *sql.Stmt
+
+	filedb        DB
+	stmtInsertFDB *sql.Stmt
+	stmtDeleteFDB *sql.Stmt
+	stmtUpdateFDB *sql.Stmt
 
 	Codecs  []securecookie.Codec
 	Options *sessions.Options
@@ -42,7 +49,7 @@ type sessionRow struct {
 }
 
 type DB interface {
-	Exec(query string, args ...interface{}) (sql.Result, error) 
+	Exec(query string, args ...interface{}) (sql.Result, error)
 	Prepare(query string) (*sql.Stmt, error)
 	Close() error
 }
@@ -52,15 +59,44 @@ func init() {
 }
 
 func NewSqliteStore(endpoint string, tableName string, path string, maxAge int, keyPairs ...[]byte) (*SqliteStore, error) {
-	db, err := sql.Open("sqlite3", endpoint)
+	// Init memory & file db
+	var conns = []*sqlite3.SQLiteConn{}
+
+	sql.Register("sqlite3_sync", &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			conns = append(conns, conn)
+			return nil
+		},
+	})
+
+	os.MkdirAll(filepath.Dir(endpoint), 0755)
+
+	db, err := sql.Open("sqlite3_sync", ":memory:")
 	if err != nil {
 		return nil, err
 	}
+	db.Ping()
+	filedb, err := sql.Open("sqlite3_sync", endpoint)
+	if err != nil {
+		return nil, err
+	}
+	filedb.Ping()
+	if len(conns) != 2 {
+		return nil, errors.New(fmt.Sprintf("Expected 2 driver connections, but found ", len(conns)))
 
-	return NewSqliteStoreFromConnection(db, tableName, path, maxAge, keyPairs...)
+	}
+	backup, err := conns[0].Backup("main", conns[1], "main")
+	if _, err = backup.Step(-1); err != nil {
+		return nil, err
+	}
+	if err = backup.Finish(); err != nil {
+		return nil, err
+	}
+
+	return NewSqliteStoreFromConnection(db, filedb, tableName, path, maxAge, keyPairs...)
 }
 
-func NewSqliteStoreFromConnection(db DB, tableName string, path string, maxAge int, keyPairs ...[]byte) (*SqliteStore, error) {
+func NewSqliteStoreFromConnection(db DB, filedb DB, tableName string, path string, maxAge int, keyPairs ...[]byte) (*SqliteStore, error) {
 	// Make sure table name is enclosed.
 	tableName = "`" + strings.Trim(tableName, "`") + "`"
 
@@ -73,10 +109,17 @@ func NewSqliteStoreFromConnection(db DB, tableName string, path string, maxAge i
 	if _, err := db.Exec(cTableQ); err != nil {
 		return nil, err
 	}
+	if _, err := filedb.Exec(cTableQ); err != nil {
+		return nil, err
+	}
 
 	insQ := "INSERT INTO " + tableName +
 		"(id, session_data, created_on, modified_on, expires_on) VALUES (NULL, ?, ?, ?, ?)"
 	stmtInsert, stmtErr := db.Prepare(insQ)
+	if stmtErr != nil {
+		return nil, stmtErr
+	}
+	stmtInsertFDB, stmtErr := db.Prepare(insQ)
 	if stmtErr != nil {
 		return nil, stmtErr
 	}
@@ -86,10 +129,18 @@ func NewSqliteStoreFromConnection(db DB, tableName string, path string, maxAge i
 	if stmtErr != nil {
 		return nil, stmtErr
 	}
+	stmtDeleteFDB, stmtErr := db.Prepare(delQ)
+	if stmtErr != nil {
+		return nil, stmtErr
+	}
 
 	updQ := "UPDATE " + tableName + " SET session_data = ?, created_on = ?, expires_on = ? " +
 		"WHERE id = ?"
 	stmtUpdate, stmtErr := db.Prepare(updQ)
+	if stmtErr != nil {
+		return nil, stmtErr
+	}
+	stmtUpdateFDB, stmtErr := db.Prepare(updQ)
 	if stmtErr != nil {
 		return nil, stmtErr
 	}
@@ -102,12 +153,16 @@ func NewSqliteStoreFromConnection(db DB, tableName string, path string, maxAge i
 	}
 
 	return &SqliteStore{
-		db:         db,
-		stmtInsert: stmtInsert,
-		stmtDelete: stmtDelete,
-		stmtUpdate: stmtUpdate,
-		stmtSelect: stmtSelect,
-		Codecs:     securecookie.CodecsFromPairs(keyPairs...),
+		db:            db,
+		stmtInsert:    stmtInsert,
+		stmtDelete:    stmtDelete,
+		stmtUpdate:    stmtUpdate,
+		stmtSelect:    stmtSelect,
+		filedb:        db,
+		stmtInsertFDB: stmtInsertFDB,
+		stmtDeleteFDB: stmtDeleteFDB,
+		stmtUpdateFDB: stmtUpdateFDB,
+		Codecs:        securecookie.CodecsFromPairs(keyPairs...),
 		Options: &sessions.Options{
 			Path:   path,
 			MaxAge: maxAge,
@@ -121,6 +176,10 @@ func (m *SqliteStore) Close() {
 	m.stmtUpdate.Close()
 	m.stmtDelete.Close()
 	m.stmtInsert.Close()
+	m.db.Close()
+	m.stmtUpdateFDB.Close()
+	m.stmtDeleteFDB.Close()
+	m.stmtInsertFDB.Close()
 	m.db.Close()
 }
 
@@ -192,6 +251,11 @@ func (m *SqliteStore) insert(session *sessions.Session) error {
 	if encErr != nil {
 		return encErr
 	}
+	//filedb insert
+	_, insErr := m.stmtInsertFDB.Exec(encoded, createdOn, modifiedOn, expiresOn)
+	if insErr != nil {
+		return insErr
+	}
 	res, insErr := m.stmtInsert.Exec(encoded, createdOn, modifiedOn, expiresOn)
 	if insErr != nil {
 		return insErr
@@ -214,8 +278,12 @@ func (m *SqliteStore) Delete(r *http.Request, w http.ResponseWriter, session *se
 	for k := range session.Values {
 		delete(session.Values, k)
 	}
-
-	_, delErr := m.stmtDelete.Exec(session.ID)
+	// filedb delete
+	_, delErr := m.stmtDeleteFDB.Exec(session.ID)
+	if delErr != nil {
+		return delErr
+	}
+	_, delErr = m.stmtDelete.Exec(session.ID)
 	if delErr != nil {
 		return delErr
 	}
@@ -253,7 +321,12 @@ func (m *SqliteStore) save(session *sessions.Session) error {
 	if encErr != nil {
 		return encErr
 	}
-	_, updErr := m.stmtUpdate.Exec(encoded, createdOn, expiresOn, session.ID)
+	// filedb update
+	_, updErr := m.stmtUpdateFDB.Exec(encoded, createdOn, expiresOn, session.ID)
+	if updErr != nil {
+		return updErr
+	}
+	_, updErr = m.stmtUpdate.Exec(encoded, createdOn, expiresOn, session.ID)
 	if updErr != nil {
 		return updErr
 	}
@@ -279,5 +352,4 @@ func (m *SqliteStore) load(session *sessions.Session) error {
 	session.Values["modified_on"] = sess.modifiedOn
 	session.Values["expires_on"] = sess.expiresOn
 	return nil
-
 }
