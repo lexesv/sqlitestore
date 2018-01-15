@@ -1,7 +1,7 @@
-sqlitestore
-==========
+sqlitestore + in memory database.
+=================================
 
-Gorilla's Session Store Implementation for SQLite
+Gorilla's Session Store Implementation for SQLite  + in memory database.
 
 Installation
 ===========
